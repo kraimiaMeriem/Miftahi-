@@ -1,0 +1,26 @@
+{
+  "vente": [
+    { "wilaya": "Alger", "individuel": 145000, "collectif": 80000 },
+    { "wilaya": "Oran", "individuel": 109000, "collectif": 67000 },
+    { "wilaya": "Annaba", "individuel": 90000, "collectif": 78000 },
+    { "wilaya": "Constantine", "individuel": 110000, "collectif": 70000 },
+    { "wilaya": "Tizi Ouzou", "individuel": 95000, "collectif": 65000 },
+    { "wilaya": "Béjaïa", "individuel": 110000, "collectif": 80000 },
+    { "wilaya": "Tlemcen", "individuel": 100000, "collectif": 70000 },
+    { "wilaya": "Sétif", "individuel": 100000, "collectif": 70000 },
+    { "wilaya": "Blida", "individuel": 105000, "collectif": 85000 },
+    { "wilaya": "Skikda", "individuel": 90000, "collectif": 70000 }
+  ],
+  "location": [
+    { "wilaya": "Alger", "individuel": 1000, "collectif": 800 },
+    { "wilaya": "Oran", "individuel": 850, "collectif": 700 },
+    { "wilaya": "Annaba", "individuel": 800, "collectif": 650 },
+    { "wilaya": "Constantine", "individuel": 850, "collectif": 700 },
+    { "wilaya": "Tizi Ouzou", "individuel": 750, "collectif": 600 },
+    { "wilaya": "Béjaïa", "individuel": 780, "collectif": 620 },
+    { "wilaya": "Tlemcen", "individuel": 700, "collectif": 550 },
+    { "wilaya": "Sétif", "individuel": 800, "collectif": 650 },
+    { "wilaya": "Blida", "individuel": 820, "collectif": 670 },
+    { "wilaya": "Skikda", "individuel": 780, "collectif": 630 }
+  ]
+}

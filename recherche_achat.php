@@ -1,0 +1,919 @@
+<?php
+session_start();
+
+define('HOST', 'localhost');
+define('DB_NAME', 'siteimmob');
+define('USER', 'root');
+define('PASS', '');
+
+$db = null; // Initialiser $db à null
+try {
+    $db = new PDO("mysql:host=" . HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4", USER, PASS);
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (PDOException $e) {
+    die("Erreur de connexion à la base de données : " . $e->getMessage());
+}
+
+// Initialiser les variables pour éviter les erreurs de variable non définie
+$annonces = [];
+$totalAnnonces = 0;
+$totalPages = 1;
+
+// Récupération des paramètres de recherche depuis l'URL (GET)
+$wilaya = isset($_GET['wilaya']) ? htmlspecialchars(trim($_GET['wilaya'])) : '';
+$piece = isset($_GET['piece']) ? htmlspecialchars(trim($_GET['piece'])) : '';
+$type_bien = isset($_GET['type_bien']) ? htmlspecialchars(trim($_GET['type_bien'])) : '';
+$superficie_min = isset($_GET['superficie_min']) ? filter_var($_GET['superficie_min'], FILTER_VALIDATE_FLOAT) : null;
+$superficie_max = isset($_GET['superficie_max']) ? filter_var($_GET['superficie_max'], FILTER_VALIDATE_FLOAT) : null;
+$prix_min = isset($_GET['prix_min']) ? filter_var($_GET['prix_min'], FILTER_VALIDATE_FLOAT) : null;
+$prix_max = isset($_GET['prix_max']) ? filter_var($_GET['prix_max'], FILTER_VALIDATE_FLOAT) : null;
+$sort_order = isset($_GET['sort_order']) ? htmlspecialchars(trim($_GET['sort_order'])) : 'new_to_old'; // Nouvelle variable pour le tri
+
+// Construction de la requête SQL de base
+$sql = "SELECT bv.*, tp.nom AS nom_type
+        FROM bien_a_vendre bv
+        JOIN type_bien tp ON bv.id_type = tp.id
+        WHERE 1=1"; // Clause de base pour faciliter l'ajout de conditions
+
+$params = []; // Tableau pour stocker les valeurs des paramètres positionnels
+
+if (!empty($wilaya) && $wilaya != '0') {
+    $sql .= " AND bv.wilaya = ?";
+    $params[] = $wilaya;
+}
+if (!empty($piece) && $piece != '0') {
+    if ($piece == '8') { // "Plus" pour 8 pièces ou plus
+        $sql .= " AND bv.piece >= 8";
+    } else {
+        $sql .= " AND bv.piece = ?";
+        $params[] = $piece;
+    }
+}
+if (!empty($type_bien) && $type_bien != '0') {
+    $sql .= " AND bv.id_type = ?";
+    $params[] = $type_bien;
+}
+if ($superficie_min !== null && $superficie_min !== false) {
+    $sql .= " AND bv.superficie >= ?";
+    $params[] = $superficie_min;
+}
+if ($superficie_max !== null && $superficie_max !== false) {
+    $sql .= " AND bv.superficie <= ?";
+    $params[] = $superficie_max;
+}
+if ($prix_min !== null && $prix_min !== false) {
+    $sql .= " AND bv.prix >= ?";
+    $params[] = $prix_min;
+}
+if ($prix_max !== null && $prix_max !== false) {
+    $sql .= " AND bv.prix <= ?";
+    $params[] = $prix_max;
+}
+
+// Ajout de la clause ORDER BY en fonction du paramètre de tri
+if ($sort_order === 'old_to_new') {
+    $sql .= " ORDER BY bv.date_annonce ASC";
+} else { // 'new_to_old' ou par défaut
+    $sql .= " ORDER BY bv.date_annonce DESC";
+}
+
+
+// Initialisation pagination
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$annoncesParPage = 6;
+$offset = ($page - 1) * $annoncesParPage;
+
+// Requête pour le total des annonces (pour la pagination)
+$countSql = "SELECT COUNT(*) FROM bien_a_vendre bv
+             JOIN type_bien tp ON bv.id_type = tp.id
+             WHERE 1=1";
+$countParams = []; // Tableau pour stocker les valeurs des paramètres positionnels pour le COUNT
+
+if (!empty($wilaya) && $wilaya != '0') {
+    $countSql .= " AND bv.wilaya = ?";
+    $countParams[] = $wilaya;
+}
+if (!empty($piece) && $piece != '0') {
+    if ($piece == '8') {
+        $countSql .= " AND bv.piece >= 8";
+    } else {
+        $countSql .= " AND bv.piece = ?";
+        $countParams[] = $piece;
+    }
+}
+if (!empty($type_bien) && $type_bien != '0') {
+    $countSql .= " AND bv.id_type = ?";
+    $countParams[] = $type_bien;
+}
+if ($superficie_min !== null && $superficie_min !== false) {
+    $countSql .= " AND bv.superficie >= ?";
+    $countParams[] = $superficie_min;
+}
+if ($superficie_max !== null && $superficie_max !== false) {
+    $countSql .= " AND bv.superficie <= ?";
+    $countParams[] = $superficie_max;
+}
+if ($prix_min !== null && $prix_min !== false) {
+    $countSql .= " AND bv.prix >= ?";
+    $countParams[] = $prix_min;
+}
+if ($prix_max !== null && $prix_max !== false) {
+    $countSql .= " AND bv.prix <= ?";
+    $countParams[] = $prix_max;
+}
+
+try {
+    $stmtCount = $db->prepare($countSql);
+    $stmtCount->execute($countParams);
+    $totalAnnonces = $stmtCount->fetchColumn();
+    $totalPages = ceil($totalAnnonces / $annoncesParPage);
+
+    // Ajout des clauses LIMIT pour la pagination à la requête principale
+    $sql .= " LIMIT ?, ?";
+
+    $stmt = $db->prepare($sql);
+
+    // Bind des paramètres pour la requête principale
+    $param_index = 1;
+    foreach ($params as $p) {
+        $stmt->bindValue($param_index++, $p);
+    }
+    // Ajout des paramètres de LIMIT à la suite des autres paramètres positionnels
+    $stmt->bindValue($param_index++, (int)$offset, PDO::PARAM_INT);
+    $stmt->bindValue($param_index++, (int)$annoncesParPage, PDO::PARAM_INT);
+
+    $stmt->execute();
+    $annonces = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    echo "<p style='color: red;'>Erreur lors de la récupération des annonces : " . $e->getMessage() . "</p>";
+}
+
+// Liste des wilayas
+$wilayas_options = [
+    "0" => "Wilaya (Tous)", "1" => "Adrar", "2" => "Chlef", "3" => "Laghouat", "4" => "Oum El Bouaghi", "5" => "Batna",
+    "6" => "Béjaïa", "7" => "Biskra", "8" => "Béchar", "9" => "Blida", "10" => "Bouira",
+    "11" => "Tamanrasset", "12" => "Tébessa", "13" => "Tlemcen", "14" => "Tiaret", "15" => "Tizi Ouzou",
+    "16" => "Alger", "17" => "Djelfa", "18" => "Jijel", "19" => "Sétif", "20" => "Saïda",
+    "21" => "Skikda", "22" => "Sidi Bel Abbès", "23" => "Annaba", "24" => "Guelma", "25" => "Constantine",
+    "26" => "Médéa", "27" => "Mostaganem", "28" => "M'Sila", "29" => "Mascara", "30" => "Ouargla",
+    "31" => "Oran", "32" => "El Bayadh", "33" => "Illizi", "34" => "Bordj Bou Arreridj", "35" => "Boumerdès",
+    "36" => "El Tarf", "37" => "Tindouf", "38" => "Tissemsilt", "39" => "El Oued", "40" => "Khenchela",
+    "41" => "Souk-Ahras", "42" => "Tipaza", "43" => "Mila", "44" => "Aïn Defla", "45" => "Naâma",
+    "46" => "Aïn Témouchent", "47" => "Ghardaïa", "48" => "Relizane", "49" => "Timimoun",
+    "50" => "Bordj Badji Mokhtar", "51" => "Ouled Djellal", "52" => "Béni Abbès", "53" => "In Salah",
+    "54" => "In Guezzam", "55" => "Touggourt", "56" => "Djanet", "57" => "El M'Ghair", "58" => "El Meniaa"
+];
+
+// Options pour le nombre de pièces
+$pieces_options = [
+    "0" => "Nombre de pièces (Tous)", "1" => "F1", "2" => "F2", "3" => "F3", "4" => "F4",
+    "5" => "F5", "6" => "F6", "7" => "F7", "8" => "Plus"
+];
+
+// Récupération des types de biens pour le filtre de recherche
+$types_bien_options = [];
+try {
+    if ($db) {
+        $stmt_types = $db->query("SELECT id, nom FROM type_bien");
+        while ($row = $stmt_types->fetch(PDO::FETCH_ASSOC)) {
+            $types_bien_options[$row['id']] = $row['nom'];
+        }
+    }
+} catch (PDOException $e) {
+    echo "<p style='color: red;'>Erreur lors de la récupération des types de biens : " . $e->getMessage() . "</p>";
+}
+
+    $orderBy = "bl.date_annonce DESC"; 
+
+    // Récupération et sécurisation du paramètre de tri si présent
+    if (isset($_GET['sort_order'])) {
+        $sortOrder = htmlspecialchars($_GET['sort_order']);
+        switch ($sortOrder) {
+            case 'recent':
+                $orderBy = "bl.date_annonce DESC";
+                break;
+            case 'oldest':
+                $orderBy = "bl.date_annonce ASC";
+                break;
+            // Pas de cases pour 'price_asc' ou 'price_desc' si vous ne les voulez pas
+            default: // Pour gérer les valeurs inattendues ou non spécifiées
+                $orderBy = "bl.date_annonce DESC";
+                break;
+        }
+    }
+
+    // Initialisation pagination
+    $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+    $annoncesParPage = 6;
+    $offset = ($page - 1) * $annoncesParPage;
+
+    // Total des annonces (compte tenu de la wilaya Annaba)
+    $totalAnnonces = $db->query("SELECT COUNT(*) FROM bien_a_louer WHERE wilaya = '23'")->fetchColumn();
+    $totalPages = ceil($totalAnnonces / $annoncesParPage);
+
+    // Requête principale pour récupérer les annonces avec le tri dynamique
+    $sql = "SELECT bl.*, tp.nom AS nom_type
+            FROM bien_a_louer bl
+            JOIN type_bien tp ON bl.id_type = tp.id
+            WHERE bl.wilaya = '23'
+            ORDER BY " . $orderBy . "
+            LIMIT :offset, :limit";
+
+    $requete = $db->prepare($sql);
+    $requete->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
+    $requete->bindValue(':limit', (int)$annoncesParPage, PDO::PARAM_INT);
+    $requete->execute();
+
+     $wilayas = [ "1" => "Adrar",
+    "2" => "Chlef",
+    "3" => "Laghouat",
+    "4" => "Oum El Bouaghi",
+    "5" => "Batna",
+    "6" => "Béjaïa",
+    "7" => "Biskra",
+    "8" => "Béchar",
+    "9" => "Blida",
+    "10" => "Bouira",
+    "11" => "Tamanrasset",
+    "12" => "Tébessa",
+    "13" => "Tlemcen",
+    "14" => "Tiaret",
+    "15" => "Tizi Ouzou",
+    "16" => "Alger",
+    "17" => "Djelfa",
+    "18" => "Jijel",
+    "19" => "Sétif",
+    "20" => "Saïda",
+    "21" => "Skikda",
+    "22" => "Sidi Bel Abbès",
+    "23" => "Annaba",
+    "24" => "Guelma",
+    "25" => "Constantine",
+    "26" => "Médéa",
+    "27" => "Mostaganem",
+    "28" => "M'Sila",
+    "29" => "Mascara",
+    "30" => "Ouargla",
+    "31" => "Oran",
+    "32" => "El Bayadh",
+    "33" => "Illizi",
+    "34" => "Bordj Bou Arreridj",
+    "35" => "Boumerdès",
+    "36" => "El Tarf",
+    "37" => "Tindouf",
+    "38" => "Tissemsilt",
+    "39" => "El Oued",
+    "40" => "Khenchela",
+    "41" => "Souk-Ahras",
+    "42" => "Tipaza",
+    "43" => "Mila",
+    "44" => "Aïn Defla",
+    "45" => "Naâma",
+    "46" => "Aïn Témouchent",
+    "47" => "Ghardaïa",
+    "48" => "Relizane",
+    "49" => "Timimoun",
+    "50" => "Bordj Badji Mokhtar",
+    "51" => "Ouled Djellal",
+    "52" => "Béni Abbès",
+    "53" => "In Salah",
+    "54" => "In Guezzam",
+    "55" => "Touggourt",
+    "56" => "Djanet",
+    "57" => "El M'Ghair",
+    "58" => "El Meniaa" ];
+?>
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8">
+    <title>Résultats de Recherche d'Achat</title>
+    <meta name="description" content="">
+    <meta name="keywords" content="">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link href="assets/img/favicon.png" rel="icon">
+    <link href="assets/img/apple-touch-icon.png" rel="apple-touch-icon">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+
+    <link href="https://fonts.googleapis.com" rel="preconnect">
+    <link href="https://fonts.gstatic.com" rel="preconnect" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Raleway:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet">
+
+    <link href="assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/vendor/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
+    <link href="assets/vendor/aos/aos.css" rel="stylesheet">
+    <link href="assets/vendor/glightbox/css/glightbox.min.css" rel="stylesheet">
+    <link href="assets/vendor/swiper/swiper-bundle.min.css" rel="stylesheet">
+
+    <link href="assets/css/main.css" rel="stylesheet">
+
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css">
+    <link href="https://unpkg.com/ionicons@4.5.10-0/dist/css/ionicons.min.css" rel="stylesheet">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/owl.carousel.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/OwlCarousel2/2.3.4/assets/owl.carousel.min.css">
+
+    <style>
+        /* Styles from Annonce Bord de la mer.php */
+        .card-overlay .property-type {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #fff;
+            font-size: 0.9rem;
+            z-index: 2;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.2rem;
+            text-transform: uppercase;
+        }
+
+        .card-overlay-a-content {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: auto;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: flex-start;
+            z-index: 2;
+        }
+
+        .card-header-a {
+            margin-bottom: 1rem;
+        }
+
+        .card-title-a {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 0.5rem;
+        }
+
+        .card-title-a a {
+            color: #fff;
+            text-decoration: none;
+        }
+
+        .card-body-a {
+            margin-bottom: 3rem;
+        }
+
+        .price-box {
+            margin-bottom: 0.5rem;
+        }
+
+        .price-a {
+            color: #fff;
+            font-size: 1.2rem;
+        }
+
+        .link-a {
+            color: #fff;
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .link-a span {
+            display: inline-block;
+            margin-left: 0.3rem;
+        }
+
+        .card-overlay .property-location {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: 0.9rem;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+        }
+
+        .card-overlay .property-location i {
+            margin-right: 0.3rem;
+            font-size: 1rem;
+        }
+
+        .card-overlay .property-date {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: #fff;
+            font-size: 0.8rem;
+            z-index: 2;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.2rem;
+        }
+
+        .property-location {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: 0.9rem;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+        }
+
+        .property-location i {
+            margin-right: 0.3rem;
+            font-size: 1rem;
+        }
+
+        .property-date {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: #fff;
+            font-size: 0.8rem;
+            z-index: 2;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.2rem;
+        }
+
+        .price-a {
+            color: #ffffff;
+            padding: .6rem .8rem;
+            border: 2px solid #fff;
+            border-radius: 50px;
+            text-transform: uppercase;
+            letter-spacing: 0.030em;
+        }
+
+        .intro-single .title-single-box {
+            border-left: 3px solid #000;
+        }
+
+        .pagination-a .pagination .page-item.active .page-link {
+            background-color: #199eb8;
+        }
+
+        @media (max-width: 991.98px) {
+            .property-grid.grid .container .row > .col-md-4 {
+                width: 50%;
+            }
+        }
+
+        @media (max-width: 767.98px) {
+            .property-grid.grid .container .row > .col-md-4 {
+                width: 100%;
+            }
+        }
+
+        .grid-option {
+            margin-bottom: 20px;
+            text-align: right;
+        }
+
+        .grid-option .custom-select {
+            display: inline-block;
+            width: auto;
+            padding: 0.375rem 2.25rem 0.375rem 0.75rem;
+            font-size: 1rem;
+            font-weight: 400;
+            line-height: 1.5;
+            color: #495057;
+            vertical-align: middle;
+            background: white url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e") right 0.75rem center/8px 10px no-repeat;
+            border: 1px solid #ced4da;
+            border-radius: 0.25rem;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+        }
+
+        .card-box-a {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .card-shadow {
+            height: 100%;
+        }
+
+        .img-box-a img {
+            object-fit: cover;
+            width: 100%;
+            height: 350px;
+        }
+
+        .col-lg-4 {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        /* Styles spécifiques pour le moteur de recherche */
+        #aa-advance-search {
+            padding: 30px 0;
+            background-color: #f8f8f8; /* Un fond léger pour le distinguer */
+            border-bottom: 1px solid #eee;
+            margin-bottom: 30px;
+        }
+
+        .aa-advance-search-area .form {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            gap: 15px; /* Espace entre les groupes de formulaire */
+            justify-content: center; /* Centrer le formulaire */
+        }
+
+        .aa-single-advance-search, .aa-single-filter-search {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 10px; /* Espace sous chaque groupe de champ */
+        }
+
+        .aa-single-advance-search label, .aa-single-filter-search p {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .aa-single-advance-search select,
+        .aa-single-filter-search input[type="number"] {
+            width: 180px; /* Largeur fixe pour les inputs/selects */
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box; /* Inclure padding et border dans la largeur */
+        }
+
+        .surface-prix-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .superficie-container, .prix-container {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 10px;
+        }
+
+        .superficie-container .aa-single-filter-search,
+        .prix-container .aa-single-filter-search {
+            display: flex;
+            flex-direction: row; /* Pour aligner Min/Max sur une ligne */
+            align-items: center;
+            gap: 10px;
+        }
+
+        .superficie-container .aa-single-filter-search label,
+        .prix-container .aa-single-filter-search label {
+            margin-bottom: 0;
+            font-weight: normal;
+        }
+
+        .aa-search-btn {
+            background-color: #199eb8;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+            margin-top: 10px; /* Espace au-dessus du bouton */
+        }
+
+        .aa-search-btn:hover {
+            background-color: #157e93;
+        }
+
+        /* Responsive adjustments for the search form */
+        @media (max-width: 768px) {
+            .aa-advance-search-area .form {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .aa-single-advance-search, .aa-single-filter-search, .superficie-container, .prix-container {
+                width: 100%; /* Les éléments prennent toute la largeur */
+            }
+            .aa-single-advance-search select,
+            .aa-single-filter-search input[type="number"] {
+                width: 100%; /* Les inputs/selects prennent toute la largeur */
+            }
+            .surface-prix-container {
+                flex-direction: column;
+            }
+        }
+    </style>
+
+</head>
+
+<body class="index-page">
+
+    <header id="header" class="header d-flex align-items-center fixed-top">
+        <div class="container-fluid position-relative d-flex align-items-center justify-content-between">
+
+            <a href="index.php" class="logo d-flex align-items-center me-auto me-xl-0">
+                <h1 class="sitename">Miftahi</h1>
+            </a>
+
+            <nav id="navmenu" class="navmenu">
+                <ul>
+                    <li><a href="acheter.php">Acheter</a></li>
+                    <li><a href="vendre.php">Vendre</a></li>
+                    <li class="dropdown"><a href="#"><span>Louer</span> <i class="bi bi-chevron-down toggle-dropdown"></i></a>
+                        <ul>
+                            <li><a href="location proprietaire.php">Mettre en location</a></li>
+                            <li><a href="location client.php">Chercher une location</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="vacances.php">Vacances</a></li>
+                    <li><a href="demenagement.php">Déménagement</a></li>
+                </ul>
+                <i class="mobile-nav-toggle d-xl-none bi bi-list"></i>
+            </nav>
+
+            <div class="avatar-container">
+                <?php if (isset($_SESSION['utilisateur_id'])): ?>
+                    <a href="tableau_de_bord.php" title="Tableau de bord">
+                <?php else: ?>
+                    <a href="connexion.php" title="Se connecter">
+                <?php endif; ?>
+                    <svg fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path>
+                    </svg>
+                </a>
+            </div>
+    </header>
+
+    <main class="main">
+        <section class="intro-single">
+            <div class="container-fluid">
+                <div class="row d-flex align-items-stretch">
+                    <div class="col-md-12">
+                        <div class="title-single-box">
+                            <h1 class="title-single">Résultats de votre recherche d'achat</h1>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+                    <?php /*
+        <section id="aa-advance-search">
+            <div class="container">
+                <div class="aa-advance-search-area">
+                    <form action="recherche_achat.php" method="GET">
+                        <div class="form">
+                            <div class="filters-row-1">
+                                <div class="aa-single-advance-search">
+                                    <label for="search_wilaya">Wilaya</label>
+                                    <select id="search_wilaya" name="wilaya">
+                                        <?php foreach ($wilayas_options as $id => $nom): ?>
+                                            <option value="<?= $id ?>" <?= $wilaya == $id ? 'selected' : '' ?>><?= htmlspecialchars($nom) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="aa-single-advance-search">
+                                    <label for="search_piece">Nombre de pièces</label>
+                                    <select id="search_piece" name="piece">
+                                        <?php foreach ($pieces_options as $id => $nom): ?>
+                                            <option value="<?= $id ?>" <?= $piece == $id ? 'selected' : '' ?>><?= htmlspecialchars($nom) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="aa-single-advance-search">
+                                    <label for="search_type_bien">Type de bien</label>
+                                    <select id="search_type_bien" name="type_bien">
+                                        <option value="0">Type de bien (Tous)</option>
+                                        <?php foreach ($types_bien_options as $id => $nom): ?>
+                                            <option value="<?= $id ?>" <?= $type_bien == $id ? 'selected' : '' ?>><?= htmlspecialchars($nom) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="surface-prix-container">
+                                <div class="superficie-container">
+                                    <div class="aa-single-filter-search">
+                                        <p>Superficie (m2)</p>
+                                        <label for="superficie_min">Min :</label>
+                                        <input type="number" id="superficie_min" name="superficie_min" value="<?= htmlspecialchars($superficie_min) ?>">
+                                        <label for="superficie_max">Max :</label>
+                                        <input type="number" id="superficie_max" name="superficie_max" value="<?= htmlspecialchars($superficie_max) ?>">
+                                    </div>
+                                </div>
+                                <div class="prix-container">
+                                    <div class="aa-single-filter-search">
+                                        <p>Prix (DA)</p>
+                                        <label for="prix_min">Min :</label>
+                                        <input type="number" id="prix_min" name="prix_min" value="<?= htmlspecialchars($prix_min) ?>">
+                                        <label for="prix_max">Max :</label>
+                                        <input type="number" id="prix_max" name="prix_max" value="<?= htmlspecialchars($prix_max) ?>">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="aa-search-btn">Rechercher</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </section>
+        */ ?>
+
+
+ <section class="property-grid grid">
+            <div class="container">
+                <div class="row">
+                    <div class="col-sm-12">
+                        <div class="grid-option">
+                            <form id="sortForm" method="GET" action=""> 
+                                <select name="sort_order" class="custom-select" onchange="this.form.submit()">
+                                    <option value="recent" <?= (!isset($_GET['sort_order']) || $_GET['sort_order'] == 'recent') ? 'selected' : '' ?>>Du plus récent au plus ancien</option>
+                                    <option value="oldest" <?= (isset($_GET['sort_order']) && $_GET['sort_order'] == 'oldest') ? 'selected' : '' ?>>De l'ancien au plus récent</option>
+                                </select>
+                            </form>
+                        </div>
+                    </div>
+
+
+                    
+
+    <?php if (count($annonces) > 0): ?>
+        <?php foreach ($annonces as $annonce): ?>
+            <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card-box-a card-shadow">
+            <div class="img-box-a">
+        <?php
+            $photos = explode(',', $annonce['photos']);
+            $first_photo = !empty($photos[0]) ? htmlspecialchars($photos[0]) : 'https://placehold.co/600x400/E0E0E0/333333?text=No+Image';
+        ?>
+           <img src="<?= $first_photo; ?>" alt="<?= htmlspecialchars($annonce['titre']); ?>" class="img-a img-fluid">
+                        </div>
+
+        <div class="card-overlay">
+        <div class="card-overlay-a-content" style="position: relative;">
+        <div class="card-header-a">
+            <h2 class="card-title-a">
+        <div class="property-type">
+        <?= htmlspecialchars($annonce['nom_type']); ?>
+        </div>
+            <a href="annonce_vente.php?id=<?= $annonce['id']; ?>">
+        <?= htmlspecialchars($annonce['titre']); ?><br />
+    <?= isset($wilayas_options[$annonce['wilaya']]) ?
+    htmlspecialchars($wilayas_options[$annonce['wilaya']]) : htmlspecialchars($annonce['wilaya']); ?>
+            </a>
+            </h2>
+        </div>
+        <div class="card-body-a">
+        <div class="price-box d-flex">
+            <span class="price-a">Prix | DA <?= number_format($annonce['prix'], 0, ',', ' '); ?></span>
+        </div>
+            <a href="annonce_vente.php?id=<?= $annonce['id']; ?>" class="link-a">Voir plus <span class="ion-ios-arrow-forward"></span></a>
+        </div>
+        </div>
+        <div class="property-location">
+        <i class="fa fa-map-marker-alt"></i>
+    <?= isset($wilayas_options[$annonce['wilaya']]) ? htmlspecialchars($wilayas_options[$annonce['wilaya']]) :
+    htmlspecialchars($annonce['wilaya']); ?>
+        </div>
+        <div class="property-date">
+                Publié le <?= date('d/m/Y', strtotime($annonce['date_annonce'])); ?>
+        </div>
+        </div>
+        </div>
+        </div>
+    <?php endforeach; ?>
+    <?php else: ?>
+        <div class="col-sm-12">
+             <p class='mt-4'>Aucune annonce ne correspond à vos critères de recherche pour le moment.</p>
+        </div>
+    <?php endif; ?>
+
+
+
+
+                    <div class="col-sm-12">
+                        <nav class="pagination-a">
+                            <ul class="pagination justify-content-end">
+                                <li class="page-item <?= ($page <= 1) ? 'disabled' : '' ?>">
+                                    <a class="page-link" href="?page=<?= $page - 1 ?>&<?= http_build_query(array_merge($_GET, ['page' => $page - 1])) ?>">
+                                        <span class="ion-ios-arrow-back"></span>
+                                    </a>
+                                </li>
+                                <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                                    <li class="page-item <?= ($i == $page) ? 'active' : '' ?>">
+                                        <a class="page-link" href="?page=<?= $i ?>&<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
+                                    </li>
+                                <?php endfor; ?>
+                                <li class="page-item <?= ($page >= $totalPages) ? 'disabled' : '' ?>">
+                                    <a class="page-link" href="?page=<?= $page + 1 ?>&<?= http_build_query(array_merge($_GET, ['page' => $page + 1])) ?>">
+                                        <span class="ion-ios-arrow-forward"></span>
+                                    </a>
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer id="footer" class="footer dark-background">
+        <div class="container">
+            <div class="row gy-3">
+                <div class="col-lg-3 col-md-6 d-flex">
+                    <div class="address">
+                        <h4>Liens rapides</h4>
+                        <ul>
+                            <li><a href="index.php">Accueil</a></li>
+                            <li><a href="vacances.php">Vacances</a></li>
+                            <li><a href="demenagement.php">Déménagement</a></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="col-lg-3 col-md-6 d-flex">
+                    <div>
+                        <h4>Contact</h4>
+                        <p>
+                            <strong>Phone: +213 555 55 55 55</strong> <span></span><br>
+                            <strong>Email: miftahidz@gmail.dz</strong> <span></span><br>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-lg-3 col-md-6">
+                    <h4>A propos de nous</h4>
+                    <p>Notre plateforme vous permet de louer, vendre ou acheter un bien immobilier facilement, sans agence.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="container copyright text-center mt-4">
+            <p>© <span>Copyright</span> <strong class="px-1 sitename">Miftahi</strong> <span>Tous droits réservés</span></p>
+            <div class="credits">
+            </div>
+        </div>
+    </footer>
+
+    <a href="#" id="scroll-top" class="scroll-top d-flex align-items-center justify-content-center"><i class="bi bi-arrow-up-short"></i></a>
+
+    <div id="preloader"></div>
+
+    <script src="assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+    <script src="assets/vendor/php-email-form/validate.js"></script>
+    <script src="assets/vendor/aos/aos.js"></script>
+    <script src="assets/vendor/purecounter/purecounter_vanilla.js"></script>
+    <script src="assets/vendor/glightbox/js/glightbox.min.js"></script>
+    <script src="assets/vendor/imagesloaded/imagesloaded.pkgd.min.js"></script>
+    <script src="assets/vendor/isotope-layout/isotope.pkgd.min.js"></script>
+    <script src="assets/vendor/swiper/swiper-bundle.min.js"></script>
+
+    <script src="assets/js/main.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        /*--/ News owl /--*/
+        $('#new-carousel').owlCarousel({
+            loop: true,
+            margin: 30,
+            responsive: {
+                0: {
+                    items: 1,
+                },
+                769: {
+                    items: 2,
+                },
+                992: {
+                    items: 3,
+                }
+            }
+        });
+        $(document).ready(function(){
+            $('#new-carousel').owlCarousel({
+                loop: true,
+                margin: 30,
+                nav: true,
+                dots: true,
+                responsive: {
+                    0: { items: 1 },
+                    769: { items: 2 },
+                    992: { items: 3 }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
